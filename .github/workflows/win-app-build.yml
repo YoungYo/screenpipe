@@ -1,0 +1,138 @@
+# ============================================================================
+# Windows 桌面 App (Tauri) 本地构建 workflow — 无 secret 版
+# 基于官方 release-app.yml 的 publish-tauri (windows x64 分支) 复刻。
+#
+# 与官方的两点关键差异 (为了在无 secret 的 fork 上跑通):
+#   1. 不执行 "Use production config" — 保留默认 tauri.conf.json。
+#      prod config 的 updater pubkey 非空 + createUpdaterArtifacts=true,
+#      会强制要求 TAURI_SIGNING_PRIVATE_KEY 去签 updater 产物。默认 config
+#      pubkey 为空,构建不需签名 —— 代价仅是装出来的 App 不带自动更新。
+#   2. 去掉 SSL.com Authenticode 签名 —— 产物是未签名 NSIS 安装器
+#      (首次运行会有 SmartScreen "未知发布者" 提示,个人使用可放行)。
+#
+# 产物: NSIS 安装器 screenpipe_<version>_x64-setup.exe
+#        (内嵌 ffmpeg / onnxruntime / openblas / vcredist / bun sidecar)
+# 触发: 仅 workflow_dispatch
+# ============================================================================
+name: Windows App Build (local)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GIT_LFS_SKIP_SMUDGE: 1
+
+jobs:
+  build-windows-app:
+    runs-on: windows-2022
+    steps:
+      - name: Enable Git long paths on Windows
+        shell: powershell
+        run: |
+          git config --global core.longpaths true
+          $longpaths = git config --global --get core.longpaths
+          if ($longpaths -ne "true") { throw "Failed to enable git long paths" }
+
+      - uses: actions/checkout@v4
+
+      - name: Shorten target dir to avoid MAX_PATH (Windows)
+        shell: powershell
+        run: |
+          $targetDir = "apps\screenpipe-app-tauri\src-tauri\target"
+          $shortDir = "C:\t"
+          if (Test-Path $shortDir) { Remove-Item -Recurse -Force $shortDir }
+          New-Item -ItemType Directory -Force -Path $shortDir | Out-Null
+          if (Test-Path $targetDir) { Remove-Item -Recurse -Force $targetDir }
+          cmd /c mklink /J $targetDir $shortDir
+          Write-Host "Created junction: $targetDir -> $shortDir"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Rust (Windows x64)
+        shell: powershell
+        run: |
+          Invoke-WebRequest https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-gnu/rustup-init.exe -OutFile rustup-init.exe
+          .\rustup-init.exe -y
+
+      - name: setup rust path
+        shell: powershell
+        run: |
+          $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+          echo "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          rustc --version
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Download ONNX Runtime
+        shell: pwsh
+        run: |
+          $version = '1.24.2'
+          $url = "https://github.com/microsoft/onnxruntime/releases/download/v$version/onnxruntime-win-x64-$version.zip"
+          $zipFile = "onnxruntime-win-x64-$version.zip"
+          $extractDir = "apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-$version"
+          Invoke-WebRequest -Uri $url -OutFile $zipFile
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          7z x $zipFile -o"apps/screenpipe-app-tauri/src-tauri/" -y
+          Get-ChildItem "$extractDir/lib" | ForEach-Object { Write-Host $_.Name }
+
+      - name: Install frontend dependencies
+        working-directory: ${{ github.workspace }}/apps/screenpipe-app-tauri
+        run: bun install
+
+      - name: Run pre_build.js
+        working-directory: ${{ github.workspace }}/apps/screenpipe-app-tauri
+        env:
+          SCREENPIPE_RELEASE_TARGET: x86_64-pc-windows-msvc
+        run: bun ./scripts/pre_build.js
+
+      - name: Build (Windows)
+        working-directory: apps/screenpipe-app-tauri
+        shell: powershell
+        env:
+          CI: true
+          CARGO_PROFILE_RELEASE_LTO: thin
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "2"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_INCREMENTAL: "true"
+          CARGO_PROFILE_RELEASE_STRIP: none
+          CARGO_PROFILE_RELEASE_PANIC: abort
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          RUSTFLAGS: ""
+          CFLAGS: "/arch:AVX2"
+          CXXFLAGS: "/arch:AVX2"
+          GGML_NATIVE: "OFF"
+          GGML_AVX512: "OFF"
+          GGML_AVX512_VBMI: "OFF"
+          GGML_AVX512_VNNI: "OFF"
+          GGML_AVX512_BF16: "OFF"
+          CMAKE_ARGS: "-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF -DCMAKE_C_FLAGS=/arch:AVX2 -DCMAKE_CXX_FLAGS=/arch:AVX2"
+          OPENBLAS_PATH: ${{ github.workspace }}/apps/screenpipe-app-tauri/src-tauri/openblas
+          AWS_LC_SYS_PREBUILT_NASM: "1"
+        run: bunx tauri build --verbose --target x86_64-pc-windows-msvc --features official-build,directml,redact-onnx-directml
+
+      - name: List bundle output
+        shell: pwsh
+        run: |
+          $nsis = "apps/screenpipe-app-tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+          if (Test-Path $nsis) { Get-ChildItem $nsis | ForEach-Object { Write-Host $_.FullName ("{0:N1} MB" -f ($_.Length/1MB)) } }
+          else { Write-Host "NSIS bundle dir not found: $nsis" }
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenpipe-windows-app
+          path: |
+            apps/screenpipe-app-tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            apps/screenpipe-app-tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
