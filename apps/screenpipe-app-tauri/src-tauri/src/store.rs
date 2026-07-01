@@ -1522,8 +1522,15 @@ impl SettingsStore {
     }
 
     pub fn app_entitled_or_dev(&self) -> bool {
+        // ---- LOCAL UNLOCK -----------------------------------------------------
+        // 本地自建版: 移除登录/订阅门禁, 全部功能免登录可用。
+        // 这是录制门禁的单一真相源 (recording.rs::require_app_entitlement 与
+        // main.rs 启动检查都读它)。直接授权 -> 下游所有 gate 分支坍缩为"已授权"。
+        return true;
+
         // Debug builds (`bun tauri dev`, e2e, signed dev builds) are never gated.
         // Release builds must not be bypassable via a runtime env var.
+        #[allow(unreachable_code)]
         if cfg!(debug_assertions) {
             return true;
         }
