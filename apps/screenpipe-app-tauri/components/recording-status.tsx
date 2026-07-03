@@ -78,12 +78,18 @@ export function RecordingStatus({
   const allActive = devices.length > 0 && pausedCount === 0;
   const canPauseRecording = devices.some((d) => d.active);
 
+  // All devices inactive = a global "pause all" (or every device individually
+  // paused). Show one clear "recording paused" that matches the pause toast,
+  // instead of the awkward "N devices paused" count.
+  const allPaused = devices.length > 0 && pausedCount === devices.length;
   const summary =
     devices.length === 0
       ? "not recording"
       : pausedCount === 0
         ? "recording"
-        : `${pausedCount} device${pausedCount > 1 ? "s" : ""} paused`;
+        : allPaused
+          ? "recording paused"
+          : `${pausedCount} device${pausedCount > 1 ? "s" : ""} paused`;
   const label = meetingActive ? `${summary} · meeting notes` : summary;
 
   // Monitors pause via /vision/device/* (screen capture only — audio keeps

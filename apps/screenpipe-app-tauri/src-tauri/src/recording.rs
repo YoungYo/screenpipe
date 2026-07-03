@@ -474,6 +474,22 @@ pub async fn stop_capture(
     Ok(())
 }
 
+/// Whether capture is currently *intended* to be running — the app-level single
+/// source of truth flipped synchronously by `start_capture`/`spawn_screenpipe`
+/// (on) and `stop_capture`/`stop_screenpipe` (off).
+///
+/// The sidebar recording dot reads this so a global "pause all" reflects
+/// immediately. It used to compute state only from the per-device
+/// `/vision|/audio/device/status` endpoints, which lag a capture teardown and
+/// carry NO app-level pause bit (a display reads active unless *individually*
+/// user-paused) — so after "pause all" the dot still showed "recording" even
+/// though capture had stopped. Gating on this flag fixes that inconsistency.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_capture_active(state: State<'_, RecordingState>) -> Result<bool, String> {
+    Ok(state.capture_intended())
+}
+
 async fn remember_active_meeting_for_capture_restart(state: &RecordingState) {
     let server_guard = state.server.lock().await;
     let Some(server) = server_guard.as_ref() else {

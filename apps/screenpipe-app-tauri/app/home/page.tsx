@@ -565,10 +565,28 @@ function HomeContent() {
         }
       }
 
-      const snapshot = JSON.stringify(devices);
+      // Global capture gate. "pause all" (stop_capture) flips the app-level
+      // capture-intent flag, but the per-device /vision|/audio status endpoints
+      // lag a capture teardown and carry NO app-level pause bit (a display reads
+      // active unless *individually* user-paused) — so the dot kept showing
+      // "recording" after pausing. capture_intended() is the synchronous single
+      // source of truth: when capture is globally off, force every device
+      // inactive so the dot reflects the pause immediately.
+      let captureActive = true;
+      try {
+        const r = await commands.getCaptureActive();
+        if (r.status === "ok") captureActive = r.data;
+      } catch {
+        // command unavailable (older sidecar) — stay optimistic, don't false-pause
+      }
+      const gatedDevices = captureActive
+        ? devices
+        : devices.map((d) => ({ ...d, active: false }));
+
+      const snapshot = JSON.stringify(gatedDevices);
       if (snapshot !== recordingDevicesSnapshotRef.current) {
         recordingDevicesSnapshotRef.current = snapshot;
-        setRecordingDevices(devices);
+        setRecordingDevices(gatedDevices);
       }
     } catch {
       // Device status is advisory UI state; keep the last known snapshot.

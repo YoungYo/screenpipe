@@ -2128,6 +2128,14 @@ async stopCapture() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getCaptureActive() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_capture_active") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Stop capture AND server so the next spawn_screenpipe does a full restart.
  * Called by "Apply & Restart", audio shortcuts, updates, and rollbacks.
