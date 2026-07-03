@@ -1,0 +1,94 @@
+# ============================================================================
+# macOS 桌面 App (Tauri) 本地免登录版构建 — 无 secret
+# 用 GitHub macos runner (自带完整 Xcode, 满足 cidre 的 xcodebuild 需求;
+# 本地只有 CommandLineTools 无法编 cidre)。
+#
+# 与官方 release-app.yml 的差异 (无 secret fork 上跑通):
+#   1. 不执行 "Use production config" — 用默认 tauri.conf.json。
+#      默认 config 的 updater pubkey 为空, 不触发 TAURI_SIGNING 强制签名;
+#      且 productName 已在源码改为正式的 "screenpipe"。
+#   2. 去掉 Apple 证书导入 / codesign / notarize — 产物 ad-hoc 签名,
+#      首次运行右键 "打开" 绕过 Gatekeeper 即可。
+#   3. 源码已含 local-unlock (store.rs + app-entitlement.ts) -> 免登录。
+#
+# 产物: aarch64 (Apple Silicon) 的 .dmg + .app
+# 触发: 仅 workflow_dispatch
+# ============================================================================
+name: macOS App Build (local)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GIT_LFS_SKIP_SMUDGE: 1
+
+jobs:
+  build-macos-app:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.93.1"
+          target: aarch64-apple-darwin
+          cache: true
+          rustflags: ""
+
+      - name: Install dependencies
+        run: |
+          brew install ffmpeg pkg-config wget || true
+          brew link --overwrite pkg-config || true
+
+      - name: Install frontend dependencies
+        working-directory: ${{ github.workspace }}/apps/screenpipe-app-tauri
+        run: bun install
+
+      - name: Run pre_build.js
+        working-directory: ${{ github.workspace }}/apps/screenpipe-app-tauri
+        env:
+          SCREENPIPE_RELEASE_TARGET: aarch64-apple-darwin
+        run: bun ./scripts/pre_build.js
+
+      - name: Build (macOS aarch64)
+        working-directory: ${{ github.workspace }}/apps/screenpipe-app-tauri
+        env:
+          # brew ffmpeg pkgconfig on Apple Silicon runner
+          PKG_CONFIG_PATH: /opt/homebrew/opt/ffmpeg/lib/pkgconfig
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          # whisper.cpp i8mm build fix on Apple Silicon (undefine matmul-int8 macro)
+          CFLAGS: "-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+          CXXFLAGS: "-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+          # rpath so the bundled ffmpeg dylibs resolve at runtime (matches release-cli)
+          RUSTFLAGS: "-C link-arg=-Wl,-rpath,@executable_path/../lib -C link-arg=-Wl,-rpath,@loader_path/../lib"
+        run: |
+          bunx tauri build --verbose --target aarch64-apple-darwin --features metal,parakeet-mlx,rfdetr-mlx,redact-onnx-coreml,official-build
+
+      - name: List bundle output
+        run: |
+          BUNDLE="apps/screenpipe-app-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle"
+          echo "== dmg =="; ls -la "$BUNDLE/dmg" 2>/dev/null || echo "no dmg dir"
+          echo "== macos (.app) =="; ls -la "$BUNDLE/macos" 2>/dev/null || echo "no macos dir"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenpipe-macos-app
+          path: |
+            apps/screenpipe-app-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            apps/screenpipe-app-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
