@@ -5,7 +5,7 @@
 "use client";
 
 import React from "react";
-import { Monitor, MonitorOff, Mic, MicOff, Volume2, VolumeX, Phone, Pause } from "lucide-react";
+import { Monitor, MonitorOff, Mic, MicOff, Volume2, VolumeX, Phone, Pause, Play } from "lucide-react";
 import posthog from "posthog-js";
 import {
   Popover,
@@ -39,6 +39,10 @@ interface RecordingStatusProps {
   meetingLoading: boolean;
   onToggleMeeting: () => void;
   onPauseRecording?: () => void | Promise<void>;
+  /** Resume after a global "pause all" — re-establishes the capture session
+   * stop_capture tore down. Without this the pause was one-way (no resume-all,
+   * and per-display resume needs a monitor id the teardown drops). */
+  onResumeRecording?: () => void | Promise<void>;
   isTranslucent?: boolean;
   /** buttons float over full-bleed video (timeline, sidebar collapsed) */
   floatingOverMedia?: boolean;
@@ -68,6 +72,7 @@ export function RecordingStatus({
   meetingLoading,
   onToggleMeeting,
   onPauseRecording,
+  onResumeRecording,
   isTranslucent,
   floatingOverMedia,
 }: RecordingStatusProps) {
@@ -135,11 +140,22 @@ export function RecordingStatus({
     }
   };
 
-  const pauseRecording = async () => {
-    if (!onPauseRecording || pauseLoading) return;
+  // The big button toggles the WHOLE capture on/off. "paused" = nothing is
+  // active (a global pause-all, or every device individually paused). In that
+  // state the button resumes instead of being a dead "all recording paused"
+  // label — pause-all tears down the capture session, so per-display resume
+  // (which needs a monitor id the teardown drops) can't bring it back; only a
+  // fresh start_capture can.
+  const isFullyPaused = devices.length > 0 && !canPauseRecording;
+  const canToggle = isFullyPaused ? !!onResumeRecording : !!onPauseRecording;
+
+  const togglePauseResume = async () => {
+    if (pauseLoading) return;
+    const action = isFullyPaused ? onResumeRecording : onPauseRecording;
+    if (!action) return;
     setPauseLoading(true);
     try {
-      await onPauseRecording();
+      await action();
       setOpen(false);
     } finally {
       setPauseLoading(false);
@@ -210,22 +226,32 @@ export function RecordingStatus({
         <div className="px-3 py-2 border-b border-border">
           <span className="text-xs font-medium text-foreground">{label}</span>
         </div>
-        {onPauseRecording && (
+        {(onPauseRecording || onResumeRecording) && (
           <div className="px-3 py-2 border-b border-border">
             <button
               type="button"
-              onClick={() => void pauseRecording()}
-              disabled={!canPauseRecording || pauseLoading}
+              onClick={() => void togglePauseResume()}
+              disabled={!canToggle || pauseLoading}
               data-testid="recording-status-pause-all"
-              title="pause all screen and audio recording — resume anytime"
+              title={
+                isFullyPaused
+                  ? "resume all screen and audio recording"
+                  : "pause all screen and audio recording — resume anytime"
+              }
               className="flex w-full items-center justify-center gap-1.5 rounded-md bg-foreground px-2 py-1.5 text-[11px] font-medium text-background transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <Pause aria-hidden="true" className="h-3 w-3 fill-current" />
+              {isFullyPaused ? (
+                <Play aria-hidden="true" className="h-3 w-3 fill-current" />
+              ) : (
+                <Pause aria-hidden="true" className="h-3 w-3 fill-current" />
+              )}
               {pauseLoading
-                ? "pausing…"
-                : canPauseRecording
-                  ? "pause all recording"
-                  : "all recording paused"}
+                ? isFullyPaused
+                  ? "resuming…"
+                  : "pausing…"
+                : isFullyPaused
+                  ? "resume all recording"
+                  : "pause all recording"}
             </button>
           </div>
         )}

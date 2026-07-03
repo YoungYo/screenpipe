@@ -616,6 +616,21 @@ function HomeContent() {
     }, 500);
   }, [refreshRecordingDevices]);
 
+  // Resume after a global "pause all". pause-all runs stop_capture (full
+  // teardown of the capture session), which has no per-device resume path — the
+  // monitor loses the id its individual resume needs. start_capture rebuilds
+  // the session and flips capture-intent back on, so the dot returns to solid.
+  const resumeRecording = useCallback(async () => {
+    try {
+      await commands.startCapture();
+    } catch (e) {
+      console.warn("resume recording failed", e);
+    }
+    window.setTimeout(() => {
+      void refreshRecordingDevices();
+    }, 800);
+  }, [refreshRecordingDevices]);
+
   // Active meeting state — lights up the phone icon for ANY active meeting
   // (manual OR auto-detected: Teams, Zoom, etc.).
   const [meetingState, setMeetingState] = useState<MeetingStatusResponse & {
@@ -1055,6 +1070,7 @@ function HomeContent() {
               meetingLoading={meetingLoading}
               onToggleMeeting={() => void toggleMeeting()}
               onPauseRecording={pauseRecording}
+              onResumeRecording={resumeRecording}
               isTranslucent={isTranslucent}
               floatingOverMedia={sidebarCollapsed && activeSection === "timeline"}
             />
