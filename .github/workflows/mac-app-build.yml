@@ -27,7 +27,10 @@ env:
 
 jobs:
   build-macos-app:
-    runs-on: macos-latest
+    # macos-26: 官方 arm 构建用的镜像。其 Metal 工具链支持 MLX 的
+    # simdgroup_matrix kernel; macos-latest(14/15) 太旧, mlx-sys 编译会报
+    # "no template named 'simdgroup_matrix'" 而失败。
+    runs-on: macos-26
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
