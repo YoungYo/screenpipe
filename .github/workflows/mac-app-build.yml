@@ -27,10 +27,9 @@ env:
 
 jobs:
   build-macos-app:
-    # macos-26: 官方 arm 构建用的镜像。其 Metal 工具链支持 MLX 的
-    # simdgroup_matrix kernel; macos-latest(14/15) 太旧, mlx-sys 编译会报
-    # "no template named 'simdgroup_matrix'" 而失败。
-    runs-on: macos-26
+    # 砍掉 MLX 特性后不再需要 macos-26 的新 Metal 工具链。用 macos-latest
+    # (更接近用户的 macOS 14.3), 降低产物运行时兼容风险。
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -80,7 +79,7 @@ jobs:
           # rpath so the bundled ffmpeg dylibs resolve at runtime (matches release-cli)
           RUSTFLAGS: "-C link-arg=-Wl,-rpath,@executable_path/../lib -C link-arg=-Wl,-rpath,@loader_path/../lib"
         run: |
-          bunx tauri build --verbose --target aarch64-apple-darwin --features metal,parakeet-mlx,rfdetr-mlx,redact-onnx-coreml,official-build
+          bunx tauri build --verbose --target aarch64-apple-darwin --features metal,redact-onnx-coreml,official-build
 
       - name: List bundle output
         run: |
